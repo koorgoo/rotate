@@ -2,6 +2,7 @@ package rotate
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -66,7 +67,7 @@ func Wrap(f *os.File, c Config) (*File, error) {
 		mu = &sync.Mutex{}
 	}
 	file := File{
-		File:  f,
+		w:     f,
 		r:     r,
 		mu:    mu,
 		bytes: c.Bytes,
@@ -78,35 +79,49 @@ func Wrap(f *os.File, c Config) (*File, error) {
 
 // File wraps os.File with rotation.
 type File struct {
-	*os.File
+	w     io.WriteCloser
 	r     Rotator
 	mu    mutex
 	bytes int64
 	n     int64
 }
 
+var _ io.WriteCloser = (*File)(nil)
+
+// Write implements io.Writer interface.
 func (f *File) Write(b []byte) (n int, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err = f.rotate(); err != nil {
 		return
 	}
-	n, err = f.File.Write(b)
+	n, err = f.w.Write(b)
 	f.n += int64(n)
 	return
+}
+
+// WriteString is like Write, but writes the contents of string s rather than
+// a slice of bytes.
+func (f *File) WriteString(s string) (int, error) {
+	return f.Write([]byte(s))
+}
+
+// Close implementes io.Closer interface.
+func (f *File) Close() error {
+	return f.w.Close()
 }
 
 func (f *File) rotate() (err error) {
 	if f.bytes <= 0 || f.n < f.bytes {
 		return nil
 	}
-	f.File, err = f.r.Rotate()
+	f.w, err = f.r.Rotate()
 	return
 }
 
 // Rotator is an interface for file rotation.
 type Rotator interface {
-	Rotate() (*os.File, error)
+	Rotate() (io.WriteCloser, error)
 }
 
 // New returns Rotate for f.
@@ -192,7 +207,7 @@ func toRegexp(name string) (*regexp.Regexp, error) {
 type Noop struct{ f *os.File }
 
 // Rotate implements Rotator interface.
-func (n *Noop) Rotate() (*os.File, error) { return n.f, nil }
+func (n *Noop) Rotate() (io.WriteCloser, error) { return n.f, nil }
 
 type rotator struct {
 	f     *os.File
@@ -203,7 +218,7 @@ type rotator struct {
 	moved bool
 }
 
-func (r *rotator) Rotate() (*os.File, error) {
+func (r *rotator) Rotate() (io.WriteCloser, error) {
 	if r.names == nil {
 		return r.f, nil
 	}
