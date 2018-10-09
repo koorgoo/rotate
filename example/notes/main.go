@@ -1,16 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/koorgoo/rotate"
 )
 
 var (
-	name  = flag.String("name", "notes.log", "destination")
-	bytes = flag.Int64("b", 100, "Config.Bytes")
+	name  = flag.String("f", "notes.log", "destination")
+	bytes = flag.Int64("b", 10, "Config.Bytes")
 	count = flag.Int64("c", 5, "Config.Count")
 )
 
@@ -32,12 +34,21 @@ func main() {
 	}
 
 	var note string
-	for {
+	reader := bufio.NewReader(os.Stdin)
+
+	var exit bool
+
+	for !exit {
 		fmt.Print("note: ")
-		if _, err = fmt.Scanln(&note); err != nil {
-			panic(err)
+		note, err = reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				exit = true
+			} else {
+				panic(err)
+			}
 		}
-		_, err = r.WriteString(note + "\n")
+		_, err = r.WriteString(note)
 		if err != nil {
 			fmt.Println(err)
 		}
