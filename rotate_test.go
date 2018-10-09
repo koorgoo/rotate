@@ -73,9 +73,9 @@ var RotatedTests = []RotatedTest{
 	},
 	{
 		"a",
-		10,
+		5,
 		[]string{"a", "a.0", "a.1"},
-		[]string{"a", "a.0", "a.1"},
+		[]string{"a", "a.0", "a.1", "", ""},
 	},
 	// filter by prefix
 	{
@@ -93,6 +93,7 @@ func TestListRotated(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			defer os.RemoveAll(root)
 			v, err := listRotated(root, tt.Name, tt.Count)
 			if err != nil {
 				t.Fatal(err)
@@ -104,12 +105,56 @@ func TestListRotated(t *testing.T) {
 	}
 }
 
+func TestFile(t *testing.T) {
+	root, err := ioutil.TempDir("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+
+	f, err := openFile(root, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	r, err := Wrap(f, Config{
+		Bytes: 5,
+		Count: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := r.Write([]byte("12345"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 5 {
+		t.Fatalf("want %d bytes, wrote %d bytes", 5, n)
+	}
+
+	n, err = r.Write([]byte("1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = os.Stat(path.Join(root, "a.0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func touch(dir, name string) error {
-	s := path.Join(dir, name)
-	f, err := os.OpenFile(s, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := openFile(dir, name)
 	if err != nil {
 		return err
 	}
 	f.Close()
 	return nil
+}
+
+func openFile(dir, name string) (*os.File, error) {
+	s := path.Join(dir, name)
+	return os.OpenFile(s, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 }

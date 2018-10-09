@@ -129,6 +129,7 @@ func New(f *os.File, count int64) (Rotator, error) {
 	if count <= 1 {
 		return &Noop{f}, nil
 	}
+
 	root, err := Dirname(f.Fd())
 	if err == ErrNotSupported {
 		return &Noop{f}, err
@@ -136,14 +137,17 @@ func New(f *os.File, count int64) (Rotator, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	names, err := listRotated(root, f.Name(), count)
 	if err != nil {
 		return nil, err
 	}
+
 	info, err := f.Stat()
 	if err != nil {
 		return nil, err
 	}
+
 	r := rotator{
 		f:     f,
 		mode:  info.Mode(),
@@ -158,21 +162,24 @@ func listRotated(root, name string, count int64) ([]string, error) {
 		panic("count must be > 1")
 	}
 
+	name = path.Base(name)
+
 	var exist []string
 	re, err := toRegexp(name)
 	if err != nil {
 		return nil, err
 	}
 
-	err = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk(root, func(wpath string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
-		if info.IsDir() && path != root {
+		if info.IsDir() && wpath != root {
 			return filepath.SkipDir
 		}
 		if re.MatchString(info.Name()) {
-			exist = append(exist, info.Name())
+			name := path.Base(info.Name())
+			exist = append(exist, name)
 		}
 		return nil
 	})
@@ -180,15 +187,12 @@ func listRotated(root, name string, count int64) ([]string, error) {
 		return nil, err
 	}
 
-	v := make([]string, 1, count)
-	v[0] = name
-
 	sort.Strings(exist)
-	for i := range exist {
-		if len(v) < cap(v) {
-			v = append(v, exist[i])
-		}
-	}
+
+	v := make([]string, count)
+	v[0] = name
+	copy(v[1:], exist)
+
 	return v, nil
 }
 
@@ -244,10 +248,15 @@ func (r *rotator) move() error {
 
 	rotated := make([]string, len(r.names))
 	for i := range r.names {
-		if r.names[i] != "" {
-			name, n := splitExt(r.names[i])
-			rotated[i] = fmt.Sprintf("%s.%d", name, n+1)
+		if i == 0 {
+			rotated[i] = r.names[i] + ".0"
+			continue
 		}
+		if r.names[i] == "" {
+			continue
+		}
+		name, n := splitExt(r.names[i])
+		rotated[i] = fmt.Sprintf("%s.%d", name, n+1)
 	}
 
 	var i int
@@ -257,10 +266,12 @@ func (r *rotator) move() error {
 		if r.names[i] == "" {
 			continue
 		}
-		err = os.Rename(
-			path.Join(r.root, r.names[i]),
-			path.Join(r.root, rotated[i]),
-		)
+		src := path.Join(r.root, r.names[i])
+		dest := path.Join(r.root, rotated[i])
+		if _, err := os.Stat(dest); !os.IsNotExist(err) {
+			_ = os.Remove(dest)
+		}
+		err = os.Rename(src, dest)
 		if err != nil {
 			break
 		}
@@ -290,7 +301,8 @@ func (r *rotator) removeLast() (err error) {
 }
 
 func (r *rotator) reopen() error {
-	f, err := os.OpenFile(r.names[0], Flags, r.mode)
+	name := path.Join(r.root, r.names[0])
+	f, err := os.OpenFile(name, Flags, r.mode)
 	if err != nil {
 		return err
 	}
