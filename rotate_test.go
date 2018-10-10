@@ -9,78 +9,44 @@ import (
 	"testing"
 )
 
-var ToRegexpTests = []struct {
+type ListTest struct {
 	Name   string
-	String string
-}{
-	{"file.txt", `^file\.txt\.\d+$`},
-}
-
-func TestToRegexp(t *testing.T) {
-	for _, tt := range ToRegexpTests {
-		t.Run(tt.Name, func(t *testing.T) {
-			re, err := toRegexp(tt.Name)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if tt.String != re.String() {
-				t.Errorf("want %q, got %q", tt.String, re.String())
-			}
-		})
-	}
-}
-
-type RotatedTest struct {
-	Name   string
-	Count  int64
-	Exist  []string
+	Touch  []string
 	Result []string
 }
 
-func (t *RotatedTest) String() string {
-	return fmt.Sprintf("%s(%d): %v from %v", t.Name, t.Count, t.Result, t.Exist)
+func (t *ListTest) String() string {
+	return fmt.Sprintf("%s with %v: %v", t.Name, t.Touch, t.Result)
 }
 
-var RotatedTests = []RotatedTest{
-	// limit by count
+var ListTests = []ListTest{
 	{
 		"a",
-		2,
-		[]string{"a", "a.0", "a.1"},
-		[]string{"a", "a.0"},
+		nil,
+		[]string{"a"},
 	},
 	{
 		"a",
-		3,
-		[]string{"a", "a.0", "a.1"},
-		[]string{"a", "a.0", "a.1"},
+		[]string{"a.1", "a", "a.0"},
+		[]string{"a", "a.0", "a.1"}, // sorted
 	},
 	{
 		"a",
-		5,
-		[]string{"a", "a.0", "a.1"},
-		[]string{"a", "a.0", "a.1", "", ""},
-	},
-	// filter by prefix
-	{
-		"a",
-		2,
 		[]string{"a", "b", "b.1", "a.0", "c.1", "a.1"},
-		[]string{"a", "a.0"},
+		[]string{"a", "a.0", "a.1"},
 	},
 }
 
-func TestListRotated(t *testing.T) {
-	for _, tt := range RotatedTests {
+func TestList(t *testing.T) {
+	for _, tt := range ListTests {
 		t.Run(tt.String(), func(t *testing.T) {
-			names := make([]string, len(tt.Exist)+1)
-			names[0] = tt.Name
-			copy(names[1:], tt.Exist)
+			names := []string{tt.Name}
+			names = append(names, tt.Touch...)
 
 			root := touch(t, names...)
 			defer os.RemoveAll(root)
 
-			v, err := listRotated(root, tt.Name, tt.Count)
+			v, err := List(root, tt.Name)
 			if err != nil {
 				t.Fatal(err)
 			}

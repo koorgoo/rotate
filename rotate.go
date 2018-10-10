@@ -153,15 +153,14 @@ func New(f *os.File, count int64) (Rotator, error) {
 		}
 		mode = v.Mode()
 	}
-	base := filepath.Base(f.Name())
-	names := []string{base}
+	var names []string
 	{
-		// TODO: Rename to List(root, name string) ([]string, error)
-		v, err := listRotated(root, base, count)
+		v, err := List(root, f.Name())
 		if err != nil {
 			return nil, err
 		}
-		names = append(names, v...)
+		names = make([]string, count)
+		copy(names, v)
 	}
 	r := rotator{
 		f:     f,
@@ -172,19 +171,16 @@ func New(f *os.File, count int64) (Rotator, error) {
 	return &r, nil
 }
 
-func listRotated(root, name string, count int64) ([]string, error) {
-	if count <= 1 {
-		panic("count must be > 1")
-	}
-
+// List returns a sorted list of files matching rotation pattern `^<name>(\.\d+)?$`.
+func List(root, name string) ([]string, error) {
 	base := filepath.Base(name)
 
-	var exist []string
 	re, err := toRegexp(base)
 	if err != nil {
 		return nil, err
 	}
 
+	var names []string
 	err = filepath.Walk(root, func(wpath string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -194,7 +190,7 @@ func listRotated(root, name string, count int64) ([]string, error) {
 		}
 		s := filepath.Base(info.Name())
 		if re.MatchString(s) {
-			exist = append(exist, s)
+			names = append(names, s)
 		}
 		return nil
 	})
@@ -202,20 +198,15 @@ func listRotated(root, name string, count int64) ([]string, error) {
 		return nil, err
 	}
 
-	sort.Strings(exist)
-
-	v := make([]string, count)
-	v[0] = base
-	copy(v[1:], exist)
-
-	return v, nil
+	sort.Strings(names)
+	return names, nil
 }
 
 func toRegexp(name string) (*regexp.Regexp, error) {
 	name = strings.Replace(name, `.`, `\.`, -1)
-	p, err := regexp.Compile(`^` + name + `\.\d+$`)
+	p, err := regexp.Compile(`^` + name + `(\.\d+)?$`)
 	if err != nil {
-		// TODO: Find better error message to pass to user.
+		// TODO: Need clearer error message.
 		return nil, fmt.Errorf("rotate: %s: %s", name, err)
 	}
 	return p, nil
@@ -312,8 +303,8 @@ func (r *rotator) removeLast() (err error) {
 	if r.names[i] == "" {
 		return
 	}
-	err = os.Remove(r.names[i])
-	if err == nil {
+	name := filepath.Join(r.root, r.names[i])
+	if err = os.Remove(name); err == nil {
 		r.names[i] = ""
 	}
 	return
