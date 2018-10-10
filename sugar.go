@@ -2,6 +2,14 @@ package rotate
 
 import "os"
 
+// Bytes.
+const (
+	B  int64 = 1
+	KB       = 1024 * B
+	MB       = 1024 * KB
+	GB       = 1024 * MB
+)
+
 // MustWrap is like Wrap, but panics on error. ErrNotSupported is skipped.
 func MustWrap(f *os.File, c Config) *File {
 	r, err := Wrap(f, c)

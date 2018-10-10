@@ -6,10 +6,35 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"syscall"
 	"testing"
 
 	"github.com/koorgoo/rotate"
 )
+
+var SplitTests = []struct {
+	Base string
+	S    string
+	N    int64
+}{
+	{"a", "a", -1},
+	{"a.0", "a", 0},
+	{"a.99", "a", 99},
+}
+
+func TestSplit(t *testing.T) {
+	for _, tt := range SplitTests {
+		t.Run(tt.Base, func(t *testing.T) {
+			s, n := rotate.Split(tt.Base)
+			if s != tt.S {
+				t.Errorf("want %q, got %q", tt.S, s)
+			}
+			if n != tt.N {
+				t.Errorf("want %d, got %d", tt.N, n)
+			}
+		})
+	}
+}
 
 type ListTest struct {
 	Name   string
@@ -66,18 +91,46 @@ func touch(t *testing.T, names ...string) (root string) {
 		t.Fatal(err)
 	}
 	for _, name := range names {
-		f, err := open(root, name)
-		if err != nil {
-			t.Fatal(err)
-		}
+		f := open(t, root, name)
 		_ = f.Close()
 	}
 	return
 }
 
-func open(root, name string) (*os.File, error) {
+// notExist calls t.Fatal() when file exists.
+func notExist(t *testing.T, root, name string) {
+	_, err := stat(root, name)
+	if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+}
+
+// exist calls t.Fatal() when file does not exist.
+func exist(t *testing.T, root, name string) {
+	_, err := stat(root, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// inode returns inode number of file.
+// It calls t.Fatal() on error.
+func inode(t *testing.T, root, name string) uint64 {
+	v, err := stat(root, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := v.Sys().(*syscall.Stat_t)
+	return s.Ino
+}
+
+func open(t *testing.T, root, name string) *os.File {
 	s := filepath.Join(root, name)
-	return os.OpenFile(s, rotate.OpenFlag, rotate.OpenPerm)
+	f, err := os.OpenFile(s, rotate.OpenFlag, rotate.OpenPerm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return f
 }
 
 func stat(root, name string) (os.FileInfo, error) {

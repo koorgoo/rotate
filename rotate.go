@@ -22,15 +22,8 @@ const (
 	OpenPerm os.FileMode = 0644
 )
 
-// Common bytes.
-const (
-	B  int64 = 1
-	KB       = 1024 * B
-	MB       = 1024 * KB
-	GB       = 1024 * MB
-)
-
 // Error is returned when rotation fails.
+// When Error, bytes are written to old file.
 type Error struct {
 	Filename string
 	Err      error
@@ -101,10 +94,11 @@ var _ io.WriteCloser = (*File)(nil)
 func (f *File) Write(b []byte) (n int, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if err = f.rotate(); err != nil {
-		return
-	}
+	rerr := f.rotate()
 	n, err = f.w.Write(b)
+	if err == nil {
+		err = rerr
+	}
 	f.n += int64(n)
 	return
 }
@@ -158,6 +152,9 @@ func New(f *os.File, count int64) (Rotator, error) {
 		v, err := List(root, f.Name())
 		if err != nil {
 			return nil, err
+		}
+		if len(v) < 1 {
+			panic("must contain current file")
 		}
 		names = make([]string, count)
 		copy(names, v)
@@ -226,92 +223,114 @@ type rotator struct {
 	mode  os.FileMode
 	root  string
 	names []string
+}
 
-	moved bool
+func (r *rotator) abs(name string) string {
+	return filepath.Join(r.root, name)
 }
 
 func (r *rotator) Rotate() (io.WriteCloser, error) {
-	if r.names == nil {
-		return r.f, nil
+	err := r.rename()
+	if err == nil {
+		// TODO: If error, rename file back & remove obsolete `<name>.0` from r.names.
+		err = r.reopen()
 	}
-	return r.rotate()
+	return r.f, err
 }
 
-func (r *rotator) rotate() (*os.File, error) {
-	if !r.moved {
-		if err := r.move(); err != nil {
-			return nil, err
+func (r *rotator) rename() (err error) {
+	if s := r.names[len(r.names)-1]; s != "" {
+		err = os.Remove(r.abs(s))
+		if err != nil {
+			return &Error{
+				Filename: s,
+				Err:      err,
+			}
 		}
-		r.moved = true
-	}
-	if err := r.reopen(); err == nil {
-		r.moved = false
-	}
-	return r.f, nil
-}
-
-func (r *rotator) move() error {
-	if err := r.removeLast(); err != nil {
-		return err
+		r.names[len(r.names)-1] = ""
 	}
 
-	rotated := make([]string, len(r.names))
-	for i := range r.names {
-		if i == 0 {
-			rotated[i] = r.names[i] + ".0"
-			continue
-		}
-		if r.names[i] == "" {
-			continue
-		}
-		name, n := splitExt(r.names[i])
-		rotated[i] = fmt.Sprintf("%s.%d", name, n+1)
-	}
+	names := shift(r.names)
 
 	var i int
-	var err error
-
 	for i = len(r.names) - 1; i >= 0; i-- {
 		if r.names[i] == "" {
 			continue
 		}
-		src := filepath.Join(r.root, r.names[i])
-		dest := filepath.Join(r.root, rotated[i])
-		if _, err := os.Stat(dest); !os.IsNotExist(err) {
-			_ = os.Remove(dest)
-		}
-		err = os.Rename(src, dest)
+		err = os.Rename(
+			r.abs(r.names[i]),
+			r.abs(names[i]),
+		)
 		if err != nil {
+			err = &Error{
+				Filename: r.names[i],
+				Err:      err,
+			}
 			break
 		}
 	}
-	if err != nil {
-		for j := i + 1; j < len(r.names); j++ {
-			r.names[j] = ""
-		}
-		return err
-	}
-	// BUG: Names of not moved files are changed.
-	for j := 1; j < i; j++ {
-		r.names[i] = rotated[i-1]
-	}
-	return nil
-}
 
-func (r *rotator) removeLast() (err error) {
-	i := len(r.names) - 1
-	if r.names[i] == "" {
-		return
-	}
-	name := filepath.Join(r.root, r.names[i])
-	if err = os.Remove(name); err == nil {
-		r.names[i] = ""
+	if i == -1 { // renamed all
+		copy(r.names[1:], names)
+	} else {
+		// leave last empty (removed)
+		copy(r.names[i+1:len(names)-2], names[i+1:])
 	}
 	return
 }
 
+// shift returns a list of names with incremented rotation suffix.
+// v must contain at list one item.
+//
+//     [a]     -> [a.0]
+//     [a a.0] -> [a.0 a.1]
+//
+func shift(names []string) []string {
+	t := make([]string, len(names))
+	for i, s := range names {
+		if s == "" {
+			break
+		}
+		base, n := Split(s)
+		t[i] = fmt.Sprintf("%s.%d", base, n+1)
+	}
+	return t
+}
+
+var sufRe = regexp.MustCompile(`\.(\d+)?$`)
+
+// Split splits base name into a cleaned one and rotation counter.
+// If name has no rotation suffix, n equals -1.
+func Split(base string) (s string, n int64) {
+	s, n = base, -1
+	v := sufRe.FindStringSubmatch(base)
+	if v == nil {
+		s, n = base, -1
+		return
+	}
+	var err error
+	s = strings.TrimSuffix(base, "."+v[1])
+	n, err = strconv.ParseInt(v[1], 10, 64)
+	if err != nil {
+		panic(fmt.Sprintf("unexpected name: %s: %v", base, v))
+	}
+	return
+}
+
+// rename moves oldpath to newpath.
+// Set removeNew to try to remove newpath (+1 excess syscall when does not exist).
+func rename(oldpath, newpath string, removeNew bool) error {
+	if removeNew {
+		err := os.Remove(newpath)
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return os.Rename(oldpath, newpath)
+}
+
 func (r *rotator) reopen() error {
-	name := filepath.Join(r.root, r.names[0])
+	name := r.abs(r.names[0])
 	f, err := os.OpenFile(name, OpenFlag, r.mode)
 	if err != nil {
 		return err
@@ -320,23 +339,6 @@ func (r *rotator) reopen() error {
 	_ = r.f.Close()
 	r.f = f
 	return nil
-}
-
-func splitExt(name string) (string, int64) {
-	var sep int
-	runes := []rune(name)
-	for i, v := range runes {
-		if v == rune('.') {
-			sep = i
-		}
-	}
-	base := string(runes[:sep])
-	ext := string(runes[sep+1:])
-	n, err := strconv.ParseInt(ext, 10, 64)
-	if err != nil {
-		panic("invalid extension: " + name)
-	}
-	return base, n
 }
 
 type mutex interface {

@@ -12,27 +12,24 @@ import (
 
 // TODO: Write API for testing scenarios.
 
-func TestFile(t *testing.T) {
+func TestFile_basic(t *testing.T) {
 	root := touch(t, "a")
 	defer os.RemoveAll(root)
 
 	name := filepath.Join(root, "a")
-	r := rotate.MustOpen(name, rotate.Config{
-		Bytes: 5,
-		Count: 2,
-	})
+	r := rotate.MustOpen(name, rotate.Config{Bytes: 1, Count: 2})
 	defer r.Close()
 
-	n, err := r.Write([]byte("12345"))
+	n, err := r.WriteString("1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 5 {
-		t.Fatalf("want %d bytes, wrote %d bytes", 5, n)
+	if n != 1 {
+		t.Fatalf("want 1 byte, wrote %d bytes", n)
 	}
 
 	// trigger rotation
-	_, err = r.Write([]byte("1"))
+	_, err = r.WriteString("1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,19 +39,46 @@ func TestFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = r.Write([]byte("2345"))
+	_, err = r.WriteString("1")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// trigger rotation
-	_, err = r.Write([]byte("1"))
+	_, err = r.WriteString("1")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = stat(root, "a.1")
-	if !os.IsNotExist(err) {
+	notExist(t, root, "a.1")
+}
+
+func TestFile_partialRename(t *testing.T) {
+	root := touch(t, "a", "a.0", "a.1", "a.2")
+	defer os.RemoveAll(root)
+
+	name := filepath.Join(root, "a")
+	r := rotate.MustOpen(name, rotate.Config{Bytes: 1, Count: 4})
+	defer r.Close()
+
+	// will cause error while renaming to a.1
+	_ = os.Remove(filepath.Join(root, "a.0"))
+
+	a1 := inode(t, root, "a.1")
+
+	_, err := r.WriteString("1")
+
+	// trigger rotation
+	_, err = r.WriteString("1")
+	if _, ok := err.(*rotate.Error); !ok {
 		t.Fatal(err)
+	}
+
+	notExist(t, root, "a.1")
+	exist(t, root, "a.2")
+
+	a2 := inode(t, root, "a.2")
+	if a1 != a2 {
+		t.Fatal("a.1: was not renamed")
 	}
 }
