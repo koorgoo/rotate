@@ -1,11 +1,13 @@
 // +build linux
 
-package rotate
+package rotate_test
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/koorgoo/rotate"
 )
 
 // TODO: Write API for testing scenarios.
@@ -14,7 +16,8 @@ func TestFile(t *testing.T) {
 	root := touch(t, "a")
 	defer os.RemoveAll(root)
 
-	r := MustOpen(filepath.Join(root, "a"), Config{
+	name := filepath.Join(root, "a")
+	r := rotate.MustOpen(name, rotate.Config{
 		Bytes: 5,
 		Count: 2,
 	})

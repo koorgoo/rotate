@@ -1,4 +1,4 @@
-package rotate
+package rotate_test
 
 import (
 	"fmt"
@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/koorgoo/rotate"
 )
 
 type ListTest struct {
@@ -46,7 +48,7 @@ func TestList(t *testing.T) {
 			root := touch(t, names...)
 			defer os.RemoveAll(root)
 
-			v, err := List(root, tt.Name)
+			v, err := rotate.List(root, tt.Name)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -75,7 +77,7 @@ func touch(t *testing.T, names ...string) (root string) {
 
 func open(root, name string) (*os.File, error) {
 	s := filepath.Join(root, name)
-	return os.OpenFile(s, OpenFlag, OpenPerm)
+	return os.OpenFile(s, rotate.OpenFlag, rotate.OpenPerm)
 }
 
 func stat(root, name string) (os.FileInfo, error) {
