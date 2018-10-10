@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -17,8 +16,11 @@ import (
 // ErrNotSupported is returned when rotation is not supported on a current system.
 var ErrNotSupported = fmt.Errorf("rotate: not supported on %s", runtime.GOOS)
 
-// Flags are used on reopen.
-const Flags = os.O_APPEND | os.O_CREATE | os.O_WRONLY
+// File constants.
+const (
+	OpenFlag int         = os.O_APPEND | os.O_CREATE | os.O_WRONLY
+	OpenPerm os.FileMode = 0644
+)
 
 // Common bytes.
 const (
@@ -58,22 +60,29 @@ func Wrap(f *os.File, c Config) (*File, error) {
 	if err != nil && err != ErrNotSupported {
 		return nil, err
 	}
-	info, err2 := f.Stat()
-	if err2 != nil {
-		return nil, err2
+	var size int64
+	{
+		v, err := f.Stat()
+		if err != nil {
+			return nil, err
+		}
+		size = v.Size()
 	}
-	var mu mutex = &noMutex{}
-	if c.Lock {
-		mu = &sync.Mutex{}
+	var mu mutex
+	{
+		if c.Lock {
+			mu = &sync.Mutex{}
+		} else {
+			mu = new(noMutex)
+		}
 	}
 	file := File{
 		w:     f,
 		r:     r,
 		mu:    mu,
 		bytes: c.Bytes,
-		n:     info.Size(),
+		n:     size,
 	}
-	// allow ErrNotSupported
 	return &file, err
 }
 
@@ -126,31 +135,37 @@ type Rotator interface {
 
 // New returns Rotate for f.
 func New(f *os.File, count int64) (Rotator, error) {
-	if count <= 1 {
-		return &Noop{f}, nil
-	}
-
 	root, err := Dirname(f.Fd())
 	if err == ErrNotSupported {
-		return &Noop{f}, err
+		return Noop(f), err
 	}
 	if err != nil {
 		return nil, err
 	}
-
-	names, err := listRotated(root, f.Name(), count)
-	if err != nil {
-		return nil, err
+	if count <= 1 {
+		return Noop(f), nil
 	}
-
-	info, err := f.Stat()
-	if err != nil {
-		return nil, err
+	var mode os.FileMode
+	{
+		v, err := f.Stat()
+		if err != nil {
+			return nil, err
+		}
+		mode = v.Mode()
 	}
-
+	base := filepath.Base(f.Name())
+	names := []string{base}
+	{
+		// TODO: Rename to List(root, name string) ([]string, error)
+		v, err := listRotated(root, base, count)
+		if err != nil {
+			return nil, err
+		}
+		names = append(names, v...)
+	}
 	r := rotator{
 		f:     f,
-		mode:  info.Mode(),
+		mode:  mode,
 		root:  root,
 		names: names,
 	}
@@ -162,10 +177,10 @@ func listRotated(root, name string, count int64) ([]string, error) {
 		panic("count must be > 1")
 	}
 
-	name = path.Base(name)
+	base := filepath.Base(name)
 
 	var exist []string
-	re, err := toRegexp(name)
+	re, err := toRegexp(base)
 	if err != nil {
 		return nil, err
 	}
@@ -177,9 +192,9 @@ func listRotated(root, name string, count int64) ([]string, error) {
 		if info.IsDir() && wpath != root {
 			return filepath.SkipDir
 		}
-		if re.MatchString(info.Name()) {
-			name := path.Base(info.Name())
-			exist = append(exist, name)
+		s := filepath.Base(info.Name())
+		if re.MatchString(s) {
+			exist = append(exist, s)
 		}
 		return nil
 	})
@@ -190,7 +205,7 @@ func listRotated(root, name string, count int64) ([]string, error) {
 	sort.Strings(exist)
 
 	v := make([]string, count)
-	v[0] = name
+	v[0] = base
 	copy(v[1:], exist)
 
 	return v, nil
@@ -206,12 +221,14 @@ func toRegexp(name string) (*regexp.Regexp, error) {
 	return p, nil
 }
 
-// Noop does not rotation.
-// It is returned with ErrNotSupported.
-type Noop struct{ f *os.File }
+// Noop return a noop Rotator.
+func Noop(f *os.File) Rotator {
+	return &noop{f}
+}
 
-// Rotate implements Rotator interface.
-func (n *Noop) Rotate() (io.WriteCloser, error) { return n.f, nil }
+type noop struct{ f *os.File }
+
+func (n *noop) Rotate() (io.WriteCloser, error) { return n.f, nil }
 
 type rotator struct {
 	f     *os.File
@@ -234,6 +251,7 @@ func (r *rotator) rotate() (*os.File, error) {
 		if err := r.move(); err != nil {
 			return nil, err
 		}
+		r.moved = true
 	}
 	if err := r.reopen(); err == nil {
 		r.moved = false
@@ -266,8 +284,8 @@ func (r *rotator) move() error {
 		if r.names[i] == "" {
 			continue
 		}
-		src := path.Join(r.root, r.names[i])
-		dest := path.Join(r.root, rotated[i])
+		src := filepath.Join(r.root, r.names[i])
+		dest := filepath.Join(r.root, rotated[i])
 		if _, err := os.Stat(dest); !os.IsNotExist(err) {
 			_ = os.Remove(dest)
 		}
@@ -277,12 +295,13 @@ func (r *rotator) move() error {
 		}
 	}
 	if err != nil {
-		for ; i < len(r.names); i++ {
-			r.names[i] = ""
+		for j := i + 1; j < len(r.names); j++ {
+			r.names[j] = ""
 		}
 		return err
 	}
-	for i := 1; i < len(r.names); i++ {
+	// BUG: Names of not moved files are changed.
+	for j := 1; j < i; j++ {
 		r.names[i] = rotated[i-1]
 	}
 	return nil
@@ -301,8 +320,8 @@ func (r *rotator) removeLast() (err error) {
 }
 
 func (r *rotator) reopen() error {
-	name := path.Join(r.root, r.names[0])
-	f, err := os.OpenFile(name, Flags, r.mode)
+	name := filepath.Join(r.root, r.names[0])
+	f, err := os.OpenFile(name, OpenFlag, r.mode)
 	if err != nil {
 		return err
 	}

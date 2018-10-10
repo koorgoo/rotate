@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"path"
+	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -41,22 +41,6 @@ func (t *RotatedTest) String() string {
 	return fmt.Sprintf("%s(%d): %v from %v", t.Name, t.Count, t.Result, t.Exist)
 }
 
-func (t *RotatedTest) PrepareDir() (string, error) {
-	dir, err := ioutil.TempDir("", "")
-	if err != nil {
-		return "", err
-	}
-	if err := touch(dir, t.Name); err != nil {
-		return "", err
-	}
-	for _, name := range t.Exist {
-		if err := touch(dir, name); err != nil {
-			return "", err
-		}
-	}
-	return dir, nil
-}
-
 var RotatedTests = []RotatedTest{
 	// limit by count
 	{
@@ -89,11 +73,13 @@ var RotatedTests = []RotatedTest{
 func TestListRotated(t *testing.T) {
 	for _, tt := range RotatedTests {
 		t.Run(tt.String(), func(t *testing.T) {
-			root, err := tt.PrepareDir()
-			if err != nil {
-				t.Fatal(err)
-			}
+			names := make([]string, len(tt.Exist)+1)
+			names[0] = tt.Name
+			copy(names[1:], tt.Exist)
+
+			root := touch(t, names...)
 			defer os.RemoveAll(root)
+
 			v, err := listRotated(root, tt.Name, tt.Count)
 			if err != nil {
 				t.Fatal(err)
@@ -105,56 +91,27 @@ func TestListRotated(t *testing.T) {
 	}
 }
 
-func TestFile(t *testing.T) {
+// touch creates files with names and returns a root directory.
+func touch(t *testing.T, names ...string) (root string) {
 	root, err := ioutil.TempDir("", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(root)
-
-	f, err := openFile(root, "a")
-	if err != nil {
-		t.Fatal(err)
+	for _, name := range names {
+		f, err := open(root, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = f.Close()
 	}
-	defer f.Close()
-
-	r, err := Wrap(f, Config{
-		Bytes: 5,
-		Count: 2,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	n, err := r.Write([]byte("12345"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n != 5 {
-		t.Fatalf("want %d bytes, wrote %d bytes", 5, n)
-	}
-
-	n, err = r.Write([]byte("1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = os.Stat(path.Join(root, "a.0"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	return
 }
 
-func touch(dir, name string) error {
-	f, err := openFile(dir, name)
-	if err != nil {
-		return err
-	}
-	f.Close()
-	return nil
+func open(root, name string) (*os.File, error) {
+	s := filepath.Join(root, name)
+	return os.OpenFile(s, OpenFlag, OpenPerm)
 }
 
-func openFile(dir, name string) (*os.File, error) {
-	s := path.Join(dir, name)
-	return os.OpenFile(s, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+func stat(root, name string) (os.FileInfo, error) {
+	return os.Stat(filepath.Join(root, name))
 }

@@ -11,9 +11,9 @@ import (
 )
 
 var (
-	name  = flag.String("f", "notes.log", "destination")
-	bytes = flag.Int64("b", 10, "Config.Bytes")
-	count = flag.Int64("c", 5, "Config.Count")
+	name  = flag.String("o", "log", "output file")
+	bytes = flag.Int64("b", 10, "bytes per file")
+	count = flag.Int64("c", 5, "max count of files")
 )
 
 func main() {
@@ -24,6 +24,10 @@ func main() {
 		panic(err)
 	}
 	defer f.Close()
+
+	fmt.Printf("*** Text is written to %q\n", *name)
+	fmt.Printf("*** After %d bytes the file is rotated\n", *bytes)
+	fmt.Println()
 
 	r, err := rotate.Wrap(f, rotate.Config{
 		Bytes: *bytes,
@@ -39,7 +43,6 @@ func main() {
 	var exit bool
 
 	for !exit {
-		fmt.Print("note: ")
 		note, err = reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
