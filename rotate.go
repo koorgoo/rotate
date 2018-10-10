@@ -47,8 +47,24 @@ type Config struct {
 	Lock bool
 }
 
+// File is an interface of *os.File.
+//
+// It was introduced for testing.
+type File interface {
+	Fd() uintptr
+	Name() string
+	Stat() (os.FileInfo, error)
+	io.WriteCloser
+}
+
+// WriteCloser wraps io.WriteCloser adding WriteString() shortcut.
+type WriteCloser interface {
+	io.WriteCloser
+	WriteString(string) (int, error)
+}
+
 // Wrap initializes and returns File.
-func Wrap(f *os.File, c Config) (*File, error) {
+func Wrap(f File, c Config) (WriteCloser, error) {
 	r, err := New(f, c.Count)
 	if err != nil && err != ErrNotSupported {
 		return nil, err
@@ -69,18 +85,18 @@ func Wrap(f *os.File, c Config) (*File, error) {
 			mu = new(noMutex)
 		}
 	}
-	file := File{
+	ff := file{
 		w:     f,
 		r:     r,
 		mu:    mu,
 		bytes: c.Bytes,
 		n:     size,
 	}
-	return &file, err
+	return &ff, err
 }
 
-// File wraps os.File with rotation.
-type File struct {
+// file wraps os.File with rotation.
+type file struct {
 	w     io.WriteCloser
 	r     Rotator
 	mu    mutex
@@ -88,10 +104,10 @@ type File struct {
 	n     int64
 }
 
-var _ io.WriteCloser = (*File)(nil)
+var _ io.WriteCloser = (*file)(nil)
 
 // Write implements io.Writer interface.
-func (f *File) Write(b []byte) (n int, err error) {
+func (f *file) Write(b []byte) (n int, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	rerr := f.rotate()
@@ -105,16 +121,16 @@ func (f *File) Write(b []byte) (n int, err error) {
 
 // WriteString is like Write, but writes the contents of string s rather than
 // a slice of bytes.
-func (f *File) WriteString(s string) (int, error) {
+func (f *file) WriteString(s string) (int, error) {
 	return f.Write([]byte(s))
 }
 
 // Close implementes io.Closer interface.
-func (f *File) Close() error {
+func (f *file) Close() error {
 	return f.w.Close()
 }
 
-func (f *File) rotate() (err error) {
+func (f *file) rotate() (err error) {
 	if f.bytes <= 0 || f.n < f.bytes {
 		return nil
 	}
@@ -127,9 +143,19 @@ type Rotator interface {
 	Rotate() (io.WriteCloser, error)
 }
 
-// New returns Rotate for f.
-func New(f *os.File, count int64) (Rotator, error) {
-	root, err := Dirname(f.Fd())
+// dirnamer is a testing interface.
+type dirnamer interface {
+	Dirname() string
+}
+
+// New returns Rotator for f.
+func New(f File, count int64) (r Rotator, err error) {
+	var root string
+	if v, ok := f.(dirnamer); ok {
+		root = v.Dirname()
+	} else {
+		root, err = Dirname(f.Fd())
+	}
 	if err == ErrNotSupported {
 		return Noop(f), err
 	}
@@ -159,13 +185,13 @@ func New(f *os.File, count int64) (Rotator, error) {
 		names = make([]string, count)
 		copy(names, v)
 	}
-	r := rotator{
+	r = &rotator{
 		f:     f,
 		mode:  mode,
 		root:  root,
 		names: names,
 	}
-	return &r, nil
+	return
 }
 
 // List returns a sorted list of files matching rotation pattern `^<name>(\.\d+)?$`.
@@ -210,16 +236,16 @@ func toRegexp(name string) (*regexp.Regexp, error) {
 }
 
 // Noop return a noop Rotator.
-func Noop(f *os.File) Rotator {
-	return &noop{f}
+func Noop(w io.WriteCloser) Rotator {
+	return &noop{w}
 }
 
-type noop struct{ f *os.File }
+type noop struct{ w io.WriteCloser }
 
-func (n *noop) Rotate() (io.WriteCloser, error) { return n.f, nil }
+func (n *noop) Rotate() (io.WriteCloser, error) { return n.w, nil }
 
 type rotator struct {
-	f     *os.File
+	f     File
 	mode  os.FileMode
 	root  string
 	names []string
