@@ -11,7 +11,7 @@ const (
 )
 
 // MustWrap is like Wrap, but panics on error. ErrNotSupported is skipped.
-func MustWrap(f File, c Config) WriteCloser {
+func MustWrap(f File, c Config) File {
 	r, err := Wrap(f, c)
 	if mustPanic(err) {
 		panic(err)
@@ -27,7 +27,7 @@ func mustPanic(err error) bool {
 }
 
 // MustOpen is like Open, but panic on error. ErrNotSupported is skipped.
-func MustOpen(name string, c Config) WriteCloser {
+func MustOpen(name string, c Config) File {
 	f, err := Open(name, c)
 	if mustPanic(err) {
 		panic(err)
@@ -36,7 +36,7 @@ func MustOpen(name string, c Config) WriteCloser {
 }
 
 // Open opens a file and wraps it.
-func Open(name string, c Config) (WriteCloser, error) {
+func Open(name string, c Config) (File, error) {
 	f, err := os.OpenFile(name, OpenFlag, OpenPerm)
 	if err != nil {
 		return nil, err

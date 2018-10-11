@@ -47,24 +47,20 @@ type Config struct {
 	Lock bool
 }
 
-// File is an interface of *os.File.
-//
-// It was introduced for testing.
+// File is an interface compatible with *os.File.
 type File interface {
+	io.Writer
+	io.Closer
+
 	Fd() uintptr
 	Name() string
 	Stat() (os.FileInfo, error)
-	io.WriteCloser
-}
-
-// WriteCloser wraps io.WriteCloser adding WriteString() shortcut.
-type WriteCloser interface {
-	io.WriteCloser
+	Sync() error
 	WriteString(string) (int, error)
 }
 
 // Wrap initializes and returns File.
-func Wrap(f File, c Config) (WriteCloser, error) {
+func Wrap(f File, c Config) (File, error) {
 	r, err := New(f, c.Count)
 	if err != nil && err != ErrNotSupported {
 		return nil, err
@@ -95,18 +91,19 @@ func Wrap(f File, c Config) (WriteCloser, error) {
 	return &ff, err
 }
 
-// file wraps os.File with rotation.
 type file struct {
-	w     io.WriteCloser
+	w     File
 	r     Rotator
 	mu    mutex
 	bytes int64
 	n     int64
 }
 
-var _ io.WriteCloser = (*file)(nil)
+func (f *file) Fd() uintptr                { return f.w.Fd() }
+func (f *file) Name() string               { return f.w.Name() }
+func (f *file) Stat() (os.FileInfo, error) { return f.w.Stat() }
+func (f *file) Sync() error                { return f.w.Sync() }
 
-// Write implements io.Writer interface.
 func (f *file) Write(b []byte) (n int, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -119,13 +116,10 @@ func (f *file) Write(b []byte) (n int, err error) {
 	return
 }
 
-// WriteString is like Write, but writes the contents of string s rather than
-// a slice of bytes.
 func (f *file) WriteString(s string) (int, error) {
 	return f.Write([]byte(s))
 }
 
-// Close implementes io.Closer interface.
 func (f *file) Close() error {
 	return f.w.Close()
 }
@@ -140,8 +134,15 @@ func (f *file) rotate() (err error) {
 
 // Rotator is an interface for file rotation.
 type Rotator interface {
-	Rotate() (io.WriteCloser, error)
+	Rotate() (File, error)
 }
+
+// Noop return a noop Rotator.
+func Noop(f File) Rotator { return &noop{f} }
+
+type noop struct{ f File }
+
+func (n *noop) Rotate() (File, error) { return n.f, nil }
 
 // dirnamer is a testing interface.
 type dirnamer interface {
@@ -194,56 +195,6 @@ func New(f File, count int64) (r Rotator, err error) {
 	return
 }
 
-// List returns a sorted list of files matching rotation pattern `^<name>(\.\d+)?$`.
-func List(root, name string) ([]string, error) {
-	base := filepath.Base(name)
-
-	re, err := toRegexp(base)
-	if err != nil {
-		return nil, err
-	}
-
-	var names []string
-	err = filepath.Walk(root, func(wpath string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() && wpath != root {
-			return filepath.SkipDir
-		}
-		s := filepath.Base(info.Name())
-		if re.MatchString(s) {
-			names = append(names, s)
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	sort.Strings(names)
-	return names, nil
-}
-
-func toRegexp(name string) (*regexp.Regexp, error) {
-	name = strings.Replace(name, `.`, `\.`, -1)
-	p, err := regexp.Compile(`^` + name + `(\.\d+)?$`)
-	if err != nil {
-		// TODO: Need clearer error message.
-		return nil, fmt.Errorf("rotate: %s: %s", name, err)
-	}
-	return p, nil
-}
-
-// Noop return a noop Rotator.
-func Noop(w io.WriteCloser) Rotator {
-	return &noop{w}
-}
-
-type noop struct{ w io.WriteCloser }
-
-func (n *noop) Rotate() (io.WriteCloser, error) { return n.w, nil }
-
 type rotator struct {
 	f     File
 	mode  os.FileMode
@@ -255,13 +206,25 @@ func (r *rotator) abs(name string) string {
 	return filepath.Join(r.root, name)
 }
 
-func (r *rotator) Rotate() (io.WriteCloser, error) {
+func (r *rotator) Rotate() (File, error) {
 	err := r.rename()
 	if err == nil {
 		// TODO: If error, rename file back & remove obsolete `<name>.0` from r.names.
 		err = r.reopen()
 	}
 	return r.f, err
+}
+
+func (r *rotator) reopen() error {
+	name := r.abs(r.names[0])
+	f, err := os.OpenFile(name, OpenFlag, r.mode)
+	if err != nil {
+		return err
+	}
+	// TODO: Handle error.
+	_ = r.f.Close()
+	r.f = f
+	return nil
 }
 
 func (r *rotator) rename() (err error) {
@@ -343,28 +306,45 @@ func Split(base string) (s string, n int64) {
 	return
 }
 
-// rename moves oldpath to newpath.
-// Set removeNew to try to remove newpath (+1 excess syscall when does not exist).
-func rename(oldpath, newpath string, removeNew bool) error {
-	if removeNew {
-		err := os.Remove(newpath)
-		if err != nil && !os.IsNotExist(err) {
+// List returns a sorted list of files matching rotation pattern `^<name>(\.\d+)?$`.
+func List(root, name string) ([]string, error) {
+	base := filepath.Base(name)
+
+	re, err := toRegexp(base)
+	if err != nil {
+		return nil, err
+	}
+
+	var names []string
+	err = filepath.Walk(root, func(wpath string, info os.FileInfo, err error) error {
+		if err != nil {
 			return err
 		}
+		if info.IsDir() && wpath != root {
+			return filepath.SkipDir
+		}
+		s := filepath.Base(info.Name())
+		if re.MatchString(s) {
+			names = append(names, s)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	return os.Rename(oldpath, newpath)
+
+	sort.Strings(names)
+	return names, nil
 }
 
-func (r *rotator) reopen() error {
-	name := r.abs(r.names[0])
-	f, err := os.OpenFile(name, OpenFlag, r.mode)
+func toRegexp(name string) (*regexp.Regexp, error) {
+	name = strings.Replace(name, `.`, `\.`, -1)
+	p, err := regexp.Compile(`^` + name + `(\.\d+)?$`)
 	if err != nil {
-		return err
+		// TODO: Need clearer error message.
+		return nil, fmt.Errorf("rotate: %s: %s", name, err)
 	}
-	// TODO: Handle error.
-	_ = r.f.Close()
-	r.f = f
-	return nil
+	return p, nil
 }
 
 type mutex interface {

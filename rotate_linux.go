@@ -10,8 +10,7 @@ import (
 
 // Dirname returns directory name containing fd.
 func Dirname(fd uintptr) (string, error) {
-	pid := os.Getpid()
-	proc := fmt.Sprintf("/proc/%d/fd/%d", pid, fd)
+	proc := fmt.Sprintf("/proc/self/fd/%d", fd)
 	s, err := os.Readlink(proc)
 	if err != nil {
 		return "", err
