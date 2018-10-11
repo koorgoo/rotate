@@ -8,7 +8,7 @@ import (
 	"path"
 )
 
-// Dirname returns directory name containing fd.
+// Dirname returns a directory containing fd.
 func Dirname(fd uintptr) (string, error) {
 	proc := fmt.Sprintf("/proc/self/fd/%d", fd)
 	s, err := os.Readlink(proc)

@@ -10,6 +10,9 @@ const (
 	GB       = 1024 * MB
 )
 
+// OpenPerm is used in *Open shortcuts to create a file.
+const OpenPerm os.FileMode = 0644
+
 // MustWrap is like Wrap, but panics on error. ErrNotSupported is skipped.
 func MustWrap(f File, c Config) File {
 	r, err := Wrap(f, c)

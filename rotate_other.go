@@ -2,7 +2,7 @@
 
 package rotate
 
-// Dirname returns directory name containing fd.
+// Dirname returns a directory containing fd.
 func Dirname(fd uintptr) (string, error) {
 	return "", ErrNotSupported
 }

@@ -16,14 +16,10 @@ import (
 // ErrNotSupported is returned when rotation is not supported on a current system.
 var ErrNotSupported = fmt.Errorf("rotate: not supported on %s", runtime.GOOS)
 
-// File constants.
-const (
-	OpenFlag int         = os.O_APPEND | os.O_CREATE | os.O_WRONLY
-	OpenPerm os.FileMode = 0644
-)
+// OpenFlag is used to open a file after rotation.
+const OpenFlag int = os.O_APPEND | os.O_CREATE | os.O_WRONLY
 
-// Error is returned when rotation fails.
-// When Error, bytes are written to old file.
+// Error is returned when rotation fails. It does not cancel write.
 type Error struct {
 	Filename string
 	Err      error
@@ -76,7 +72,7 @@ func Wrap(f File, c Config) (File, error) {
 	var mu mutex
 	{
 		if c.Lock {
-			mu = &sync.Mutex{}
+			mu = new(sync.Mutex)
 		} else {
 			mu = new(noMutex)
 		}
@@ -269,7 +265,7 @@ func (r *rotator) rename() (err error) {
 }
 
 // shift returns a list of names with incremented rotation suffix.
-// v must contain at list one item.
+// names must contain at list one item.
 //
 //     [a]     -> [a.0]
 //     [a a.0] -> [a.0 a.1]
@@ -286,30 +282,31 @@ func shift(names []string) []string {
 	return t
 }
 
-var sufRe = regexp.MustCompile(`\.(\d+)?$`)
+// SuffixRe is a pattern of rotation counter suffix.
+const SuffixRe = `(\.[1-9]+)?$`
 
-// Split splits base name into a cleaned one and rotation counter.
-// If name has no rotation suffix, n equals -1.
-func Split(base string) (s string, n int64) {
-	s, n = base, -1
-	v := sufRe.FindStringSubmatch(base)
-	if v == nil {
-		s, n = base, -1
+var suffixRe = regexp.MustCompile(SuffixRe)
+
+// Split splits name into base part and rotation counter.
+// When name cannot be splitted, base equals name.
+func Split(name string) (base string, n int64) {
+	v := suffixRe.FindStringSubmatch(name)
+	if v == nil || v[1] == "" {
+		base = name
 		return
 	}
-	var err error
-	s = strings.TrimSuffix(base, "."+v[1])
-	n, err = strconv.ParseInt(v[1], 10, 64)
+	base = strings.TrimSuffix(name, v[1])
+	n, err := strconv.ParseInt(v[1][1:], 10, 64) // without dot
 	if err != nil {
-		panic(fmt.Sprintf("unexpected name: %s: %v", base, v))
+		panic("invalid suffix regexp")
 	}
 	return
 }
 
-// List returns a sorted list of files matching rotation pattern `^<name>(\.\d+)?$`.
+// List returns a sorted list of names ending with SuffixRe.
+// The list also includes name.
 func List(root, name string) ([]string, error) {
 	base := filepath.Base(name)
-
 	re, err := toRegexp(base)
 	if err != nil {
 		return nil, err
@@ -339,7 +336,7 @@ func List(root, name string) ([]string, error) {
 
 func toRegexp(name string) (*regexp.Regexp, error) {
 	name = strings.Replace(name, `.`, `\.`, -1)
-	p, err := regexp.Compile(`^` + name + `(\.\d+)?$`)
+	p, err := regexp.Compile(`^` + name + SuffixRe)
 	if err != nil {
 		// TODO: Need clearer error message.
 		return nil, fmt.Errorf("rotate: %s: %s", name, err)

@@ -13,24 +13,26 @@ import (
 )
 
 var SplitTests = []struct {
+	Name string
 	Base string
-	S    string
 	N    int64
 }{
-	{"a", "a", -1},
-	{"a.0", "a", 0},
+	{"a", "a", 0},
+	{"a.1", "a", 1},
 	{"a.99", "a", 99},
+	{"a.0", "a.0", 0},
+	{"a.b", "a.b", 0},
 }
 
 func TestSplit(t *testing.T) {
 	for _, tt := range SplitTests {
 		t.Run(tt.Base, func(t *testing.T) {
-			s, n := rotate.Split(tt.Base)
-			if s != tt.S {
-				t.Errorf("want %q, got %q", tt.S, s)
+			s, n := rotate.Split(tt.Name)
+			if s != tt.Base {
+				t.Errorf("base: want %q, got %q", tt.Base, s)
 			}
 			if n != tt.N {
-				t.Errorf("want %d, got %d", tt.N, n)
+				t.Errorf("n: want %d, got %d", tt.N, n)
 			}
 		})
 	}
@@ -54,13 +56,13 @@ var ListTests = []ListTest{
 	},
 	{
 		"a",
-		[]string{"a.1", "a", "a.0"},
-		[]string{"a", "a.0", "a.1"}, // sorted
+		[]string{"a.2", "a.1", "a", "a.0"},
+		[]string{"a", "a.1", "a.2"}, // sorted, exclude a.0
 	},
 	{
 		"a",
-		[]string{"a", "b", "b.1", "a.0", "c.1", "a.1"},
-		[]string{"a", "a.0", "a.1"},
+		[]string{"a", "b", "b.1", "c.1", "a.1"},
+		[]string{"a", "a.1"},
 	},
 }
 
