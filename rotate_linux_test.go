@@ -53,6 +53,33 @@ func TestFile_basic(t *testing.T) {
 	notExist(t, root, "a.2")
 }
 
+func TestFile_recreatesFile(t *testing.T) {
+	root := touch(t, "a")
+	defer os.RemoveAll(root)
+
+	name := filepath.Join(root, "a")
+	r := rotate.MustOpen(name, rotate.Config{Bytes: 1})
+	defer r.Close()
+
+	i1 := inode(t, root, "a")
+
+	_, err := r.WriteString("1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// trigger rotation
+	_, err = r.WriteString("1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	i2 := inode(t, root, "a")
+	if i1 == i2 {
+		t.Fatal("file must be removed and created")
+	}
+}
+
 func TestFile_doesNotRenameAllFilesOnError(t *testing.T) {
 	// Expected renames:
 	//

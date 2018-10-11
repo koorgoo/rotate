@@ -33,10 +33,10 @@ func (e *Error) Error() string {
 type Config struct {
 	// Bytes sets soft limit for file size.
 	// Soft limit may be exceeded to write a message to a single file.
-	// No rotating will be done with 0 Bytes.
+	// If Bytes == 0, no rotation happens.
 	Bytes int64
-	// Count defines the maximum amount of files - 1 current + (Count-1) rotated.
-	// A Count of 0 means no limit for rotated files.
+	// Count defines the maximum amount of files (open + rotated).
+	// If Count <= 1, a file will be removed & created on Bytes size.
 	Count int64
 	// Lock defines whether to lock on write.
 	// Must be set for asynchronous writes.
@@ -159,9 +159,6 @@ func New(f File, count int64) (r Rotator, err error) {
 	if err != nil {
 		return nil, err
 	}
-	if count <= 1 {
-		return Noop(f), nil
-	}
 	var mode os.FileMode
 	{
 		v, err := f.Stat()
@@ -172,7 +169,13 @@ func New(f File, count int64) (r Rotator, err error) {
 	}
 	var names []string
 	{
-		v, err := List(root, f.Name())
+		base := filepath.Base(f.Name())
+		// save syscall while a single file
+		if count < 1 {
+			names = []string{base}
+			goto AFTER_NAMES
+		}
+		v, err := List(root, base)
 		if err != nil {
 			return nil, err
 		}
@@ -182,10 +185,12 @@ func New(f File, count int64) (r Rotator, err error) {
 		names = make([]string, count)
 		copy(names, v)
 	}
+AFTER_NAMES:
 	r = &rotator{
 		f:     f,
 		mode:  mode,
 		root:  root,
+		name:  names[0],
 		names: names,
 	}
 	return
@@ -195,6 +200,7 @@ type rotator struct {
 	f     File
 	mode  os.FileMode
 	root  string
+	name  string
 	names []string
 }
 
@@ -212,7 +218,7 @@ func (r *rotator) Rotate() (File, error) {
 }
 
 func (r *rotator) reopen() error {
-	name := r.abs(r.names[0])
+	name := r.abs(r.name)
 	f, err := os.OpenFile(name, OpenFlag, r.mode)
 	if err != nil {
 		return err
