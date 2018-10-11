@@ -3,18 +3,17 @@ package main
 import (
 	"os"
 
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
+	"github.com/sirupsen/logrus"
 
 	"github.com/koorgoo/rotate/example"
 )
 
-// Writer wraps zap.Logger.
+// Writer wraps logrus.Logger.
 type Writer struct {
-	logger *zap.Logger
+	logger *logrus.Logger
 }
 
-// WriteString implements io.Writer interface.
+// Write implements io.Writer interface.
 func (w *Writer) Write(b []byte) (int, error) {
 	w.logger.Debug(string(b))
 	return len(b), nil
@@ -24,9 +23,9 @@ func main() {
 	r := example.Open()
 	defer r.Close()
 
-	logger := zap.New(zapcore.NewCore(
-		zapcore.NewConsoleEncoder(zapcore.EncoderConfig{MessageKey: "zap"}),
-		r, zapcore.DebugLevel))
+	logger := logrus.New()
+	logger.SetOutput(r)
+	logger.SetLevel(logrus.DebugLevel)
 
 	example.Pipe(os.Stdin, &Writer{logger})
 }

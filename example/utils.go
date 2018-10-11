@@ -13,8 +13,8 @@ func Open() rotate.File {
 	var name string
 	var c rotate.Config
 
-	flag.StringVar(&name, "o", "log", "output file")
-	flag.Int64Var(&c.Bytes, "b", 10, "bytes per file")
+	flag.StringVar(&name, "o", "out", "output file")
+	flag.Int64Var(&c.Bytes, "b", 1, "bytes per file")
 	flag.Int64Var(&c.Count, "c", 5, "max count of files")
 	flag.Parse()
 
