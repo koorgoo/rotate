@@ -26,7 +26,7 @@ type Error struct {
 }
 
 func (e *Error) Error() string {
-	return fmt.Sprintf("rotate: %v", e.Err)
+	return fmt.Sprintf("rotate: %s: %v", e.Filename, e.Err)
 }
 
 // Config defines rotating policy.
@@ -131,6 +131,9 @@ func (f *file) rotate() (err error) {
 		return nil
 	}
 	f.w, err = f.r.Rotate()
+	if err == nil {
+		f.n = 0
+	}
 	return
 }
 

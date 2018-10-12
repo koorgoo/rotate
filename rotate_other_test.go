@@ -3,6 +3,7 @@
 package rotate_test
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/koorgoo/rotate"
@@ -10,8 +11,8 @@ import (
 
 func TestFile(t *testing.T) {
 	root := touch(t, "test")
-	f := open(t, root, "test")
-	r, err := rotate.Wrap(f, rotate.Config{})
+	name := filepath.Join(root, "test")
+	r, err := rotate.Open(name, rotate.Config{})
 	if err != rotate.ErrNotSupported {
 		t.Errorf("want ErrNotSupported, got %v", err)
 	}

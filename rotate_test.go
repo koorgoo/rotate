@@ -90,10 +90,13 @@ func TestList(t *testing.T) {
 func touch(t *testing.T, names ...string) (root string) {
 	root, err := ioutil.TempDir("", "")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("touch: %v", err)
 	}
 	for _, name := range names {
-		f := open(t, root, name)
+		f, err := open(root, name)
+		if err != nil {
+			t.Fatalf("touch: %v", err)
+		}
 		_ = f.Close()
 	}
 	return
@@ -103,7 +106,7 @@ func touch(t *testing.T, names ...string) (root string) {
 func notExist(t *testing.T, root, name string) {
 	_, err := stat(root, name)
 	if !os.IsNotExist(err) {
-		t.Fatal(err)
+		t.Fatalf("notExist: %v", err)
 	}
 }
 
@@ -111,7 +114,7 @@ func notExist(t *testing.T, root, name string) {
 func exist(t *testing.T, root, name string) {
 	_, err := stat(root, name)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("exist: %v", err)
 	}
 }
 
@@ -120,19 +123,44 @@ func exist(t *testing.T, root, name string) {
 func inode(t *testing.T, root, name string) uint64 {
 	v, err := stat(root, name)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("inode: %v", err)
 	}
 	s := v.Sys().(*syscall.Stat_t)
 	return s.Ino
 }
 
-func open(t *testing.T, root, name string) *os.File {
-	s := filepath.Join(root, name)
-	f, err := os.OpenFile(s, rotate.OpenFlag, rotate.OpenPerm)
+func ropen(t *testing.T, root, name string, c rotate.Config) (f rotate.File) {
+	f, err := open(root, name)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("ropen: %v", err)
 	}
-	return f
+	f, err = rotate.Wrap(f, c)
+	if err != nil {
+		t.Fatalf("ropen: %v", err)
+	}
+	return
+}
+
+func write(t *testing.T, f rotate.File, s string) (n int) {
+	n, err := f.WriteString(s)
+	if err != nil {
+		if _, ok := err.(*rotate.Error); !ok {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	return
+}
+
+func remove(t *testing.T, root, name string) {
+	err := os.Remove(filepath.Join(root, name))
+	if err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+}
+
+func open(root, name string) (*os.File, error) {
+	s := filepath.Join(root, name)
+	return os.OpenFile(s, rotate.OpenFlag, rotate.OpenPerm)
 }
 
 func stat(root, name string) (os.FileInfo, error) {

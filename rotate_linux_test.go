@@ -4,79 +4,70 @@ package rotate_test
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/koorgoo/rotate"
 )
 
-// TODO: Write API for testing scenarios.
-
 func TestFile_basic(t *testing.T) {
 	root := touch(t, "a")
 	defer os.RemoveAll(root)
 
-	name := filepath.Join(root, "a")
-	r := rotate.MustOpen(name, rotate.Config{Bytes: 1, Count: 2})
+	r := ropen(t, root, "a", rotate.Config{Bytes: 1, Count: 2})
 	defer r.Close()
 
-	n, err := r.WriteString("1")
-	if err != nil {
-		t.Fatal(err)
-	}
+	n := write(t, r, "1")
 	if n != 1 {
 		t.Fatalf("want 1 byte, wrote %d bytes", n)
 	}
 
 	// trigger rotation
-	_, err = r.WriteString("1")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = stat(root, "a.1")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = r.WriteString("1")
-	if err != nil {
-		t.Fatal(err)
-	}
+	write(t, r, "1")
+	exist(t, root, "a.1")
 
 	// trigger rotation
-	_, err = r.WriteString("1")
-	if err != nil {
-		t.Fatal(err)
-	}
+	write(t, r, "1")
+	write(t, r, "1")
 
 	notExist(t, root, "a.2")
+}
+
+func TestFile_resetsWrittenBytesOnRotation(t *testing.T) {
+	root := touch(t, "a")
+	defer os.RemoveAll(root)
+
+	r := ropen(t, root, "a", rotate.Config{Bytes: 2, Count: 2})
+	defer r.Close()
+
+	// trigger rotation
+	write(t, r, "12")
+	write(t, r, "1")
+
+	i1 := inode(t, root, "a")
+	write(t, r, "2")
+	i2 := inode(t, root, "a.1")
+
+	if i1 == i2 {
+		t.Fatal("a must not be rotated")
+	}
 }
 
 func TestFile_recreatesFile(t *testing.T) {
 	root := touch(t, "a")
 	defer os.RemoveAll(root)
 
-	name := filepath.Join(root, "a")
-	r := rotate.MustOpen(name, rotate.Config{Bytes: 1})
+	r := ropen(t, root, "a", rotate.Config{Bytes: 1})
 	defer r.Close()
 
 	i1 := inode(t, root, "a")
 
-	_, err := r.WriteString("1")
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	// trigger rotation
-	_, err = r.WriteString("1")
-	if err != nil {
-		t.Fatal(err)
-	}
+	write(t, r, "1")
+	write(t, r, "1")
 
 	i2 := inode(t, root, "a")
 	if i1 == i2 {
-		t.Fatal("file must be removed and created")
+		t.Fatal("a must be removed and created")
 	}
 }
 
@@ -89,21 +80,16 @@ func TestFile_doesNotRenameAllFilesOnError(t *testing.T) {
 	root := touch(t, "a", "a.1", "a.2", "a.3")
 	defer os.RemoveAll(root)
 
-	name := filepath.Join(root, "a")
-	r := rotate.MustOpen(name, rotate.Config{Bytes: 1, Count: 4})
+	r := ropen(t, root, "a", rotate.Config{Bytes: 1, Count: 4})
 	defer r.Close()
 
-	_ = os.Remove(filepath.Join(root, "a.1"))
+	remove(t, root, "a.1")
 
 	a2 := inode(t, root, "a.2")
 
-	_, err := r.WriteString("1")
-
 	// trigger rotation
-	_, err = r.WriteString("1")
-	if _, ok := err.(*rotate.Error); !ok {
-		t.Fatal(err)
-	}
+	write(t, r, "1")
+	write(t, r, "1")
 
 	exist(t, root, "a")
 	notExist(t, root, "a.1")
