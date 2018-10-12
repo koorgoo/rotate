@@ -2,7 +2,7 @@ package rotate
 
 import "os"
 
-// Bytes.
+// Common bytes.
 const (
 	B  int64 = 1
 	KB       = 1024 * B
@@ -29,7 +29,7 @@ func mustPanic(err error) bool {
 	return err != nil
 }
 
-// MustOpen is like Open, but panic on error. ErrNotSupported is skipped.
+// MustOpen is like Open, but panics on error. ErrNotSupported is skipped.
 func MustOpen(name string, c Config) File {
 	f, err := Open(name, c)
 	if mustPanic(err) {

@@ -55,7 +55,7 @@ type File interface {
 	WriteString(string) (int, error)
 }
 
-// Wrap initializes and returns File.
+// Wrap wraps f with Rotator instance and returns File.
 func Wrap(f File, c Config) (File, error) {
 	r, err := New(f, c.Count)
 	if err != nil && err != ErrNotSupported {
@@ -98,7 +98,13 @@ type file struct {
 func (f *file) Fd() uintptr                { return f.w.Fd() }
 func (f *file) Name() string               { return f.w.Name() }
 func (f *file) Stat() (os.FileInfo, error) { return f.w.Stat() }
-func (f *file) Sync() error                { return f.w.Sync() }
+
+func (f *file) Sync() (err error) {
+	f.mu.Lock()
+	err = f.w.Sync()
+	f.mu.Unlock()
+	return
+}
 
 func (f *file) Write(b []byte) (n int, err error) {
 	f.mu.Lock()
@@ -273,8 +279,8 @@ func (r *rotator) rename() (err error) {
 // shift returns a list of names with incremented rotation suffix.
 // names must contain at list one item.
 //
-//     [a]     -> [a.0]
-//     [a a.0] -> [a.0 a.1]
+//     [a]     -> [a.1]
+//     [a a.1] -> [a.1 a.2]
 //
 func shift(names []string) []string {
 	t := make([]string, len(names))
@@ -309,8 +315,8 @@ func Split(name string) (base string, n int64) {
 	return
 }
 
-// List returns a sorted list of names ending with SuffixRe.
-// The list also includes name.
+// List returns a sorted list of names of existing files which end with SuffixRe.
+// If name exists, it is the first item in result.
 func List(root, name string) ([]string, error) {
 	base := filepath.Base(name)
 	re, err := toRegexp(base)
